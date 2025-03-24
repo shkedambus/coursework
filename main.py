@@ -1,7 +1,7 @@
 import time
 import os
 import gdown
-from PyPDF2 import PdfReader
+import fitz
 
 from chunking import hybrid_chunking, merge_short_chunks
 from qdrant import embedd_chunks, update_db, inspect_collection, clear_collection
@@ -13,12 +13,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Program")
 
 def extract_text_from_pdf(pdf_path):
-    with open(pdf_path, "rb") as f:
-        reader = PdfReader(f)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text()
-        return text
+    doc = fitz.open(pdf_path)
+    text = "\n".join(page.get_text() for page in doc)
+    doc.close()
+    return text
 
 def main_menu():
     print("\n(1) Загрузить документы (через ссылку на Google Drive).")
