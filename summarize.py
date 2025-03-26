@@ -1,113 +1,134 @@
 import torch
+from tqdm import tqdm
 
-def summarize_with_rugpt3(article, model_name, tokenizer, model, params):
-    # Настройка параметров
-    max_length = params.get("max_length", 512)
-    add_special_tokens = params.get("add_special_tokens", False)
-    no_repeat_ngram_size = params.get("no_repeat_ngram_size", 2)
-    padding = params.get("padding", "max_length")
-    max_new_tokens = params.get("max_new_tokens", 200)
-
-    # Подготовка текста
-    text_tokens = tokenizer(
-        article,
-        max_length=max_length,
-        add_special_tokens=add_special_tokens, 
-        padding=padding,
-        truncation=True
-    )["input_ids"]
-
-    input_ids = text_tokens + [tokenizer.sep_token_id]
-    input_ids = torch.LongTensor([input_ids])
-
-    # Генерация текста
-    output_ids = model.generate(
-        input_ids=input_ids,
-        max_new_tokens=max_new_tokens,
-        no_repeat_ngram_size=no_repeat_ngram_size
-    )
-
-    # Обработка результата
-    summary = tokenizer.decode(output_ids[0], skip_special_tokens=False, clean_up_tokenization_spaces=True)
-    summary = summary.split(tokenizer.sep_token)[1]
-    summary = summary.split(tokenizer.eos_token)[0]
-    return summary
-
-def summarize_with_fred(article, model_name, tokenizer, model, params):
+def summarize_with_rugpt3(article, model_name, tokenizer, model, prefix_ids, params):
     # Настройка параметров
     device = params.get("device", "cuda" if torch.cuda.is_available() else "cpu")
-    min_length = params.get("min_length", 30)
     no_repeat_ngram_size = params.get("no_repeat_ngram_size", 2)
-    num_beams = params.get("num_beams", 5)
-    do_sample = params.get("do_sample", True)
-    top_p = params.get("top_p", 0.9)
-    max_new_tokens = params.get("max_new_tokens", 200)
-    prefix = params.get("prefix", "<LM> Сократи текст.\n")
+    num_beams = params.get("num_beams", 4)
+    add_special_tokens = params.get("add_special_tokens", True)
 
-    # Настройка модели
-    model = model.to(device)
-    model.eval()
-
-    # Подготовка текста
-    src_text = prefix + article
-    input_ids=torch.tensor([tokenizer.encode(src_text)]).to(device)
-
-    # Генерация текста
-    outputs=model.generate(
-        input_ids,
-        eos_token_id=tokenizer.eos_token_id,
-        num_beams=num_beams,
-        min_new_tokens=min_length,
-        max_new_tokens=max_new_tokens,
-        do_sample=do_sample,
-        no_repeat_ngram_size=no_repeat_ngram_size,
-        top_p=top_p)
-
-    # Обработка результата
-    summary = tokenizer.decode(outputs[0][1:])
-    return summary
-
-def summarize_text(article, model_name, tokenizer, model, params):
-    # Настройка параметров
-    device = params.get("device", "cuda" if torch.cuda.is_available() else "cpu")
-    max_length = params.get("max_length", 512)
-    min_length = params.get("min_length", 30)
-    no_repeat_ngram_size = params.get("no_repeat_ngram_size", 2)
-    num_beams = params.get("num_beams", 5)
-    add_special_tokens = params.get("add_special_tokens", False)
-    do_sample = params.get("do_sample", False)
-    top_p = params.get("top_p", 0.9)
-    max_new_tokens = params.get("max_new_tokens", 200)
-    prefix = params.get("prefix", "Сократи текст.\n")
-    padding = params.get("padding", "max_length")
-
-    # Подготовка текста
-    src_text = prefix + article
     input_ids = tokenizer(
-        src_text,
+        article,
         return_tensors="pt",
-        max_length=max_length,
-        padding=padding,
-        truncation=True,
+        padding=False,
+        truncation=False,   
         add_special_tokens=add_special_tokens
     )["input_ids"]
 
-    input_ids = input_ids.to(device)
+    # Количество токенов в тексте
+    tokens = input_ids.squeeze(0)
+    token_count = len(tokens)
 
-    # Настройка модели
-    model = model.to(device)
-    model.eval()
+    # Лимит модели по количеству токенов
+    max_token_count = getattr(model.config, "max_position_embeddings", 512) // 2
 
-    # Генерация текста
-    output_ids = model.generate(
-        input_ids=input_ids,
-        max_new_tokens=max_new_tokens,
-        min_length=min_length,
-        no_repeat_ngram_size=no_repeat_ngram_size,
-        num_beams=num_beams,
-        do_sample=do_sample,
-    )[0]
+    chunks = [tokens[i:i + max_token_count] for i in range(0, token_count, max_token_count)]
+    chunks = [chunk for chunk in chunks if len(chunk) > 0]
 
-    # Обработка результата
-    summary = tokenizer.decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+    with torch.inference_mode():
+        all_output_ids = []
+        for chunk_ids in chunks:
+        # for chunk_ids in tqdm(chunks, desc="Summarizing chunks"):
+            max_new_tokens = max(int(len(chunk_ids) * 0.35), 200)
+            min_length = max(int(len(chunk_ids) * 0.15), 50)
+
+            eos_id = torch.tensor([tokenizer.sep_token_id], dtype=chunk_ids.dtype, device=chunk_ids.device)
+
+            if len(prefix_ids) > 0:
+                chunk_ids = torch.cat((prefix_ids, chunk_ids), dim=0)
+
+            chunk_ids = torch.cat((chunk_ids, eos_id), dim=0)
+
+            chunk_ids = chunk_ids.unsqueeze(0).to(device)
+
+            output_ids = model.generate(
+                input_ids=chunk_ids,
+                max_new_tokens=max_new_tokens,
+                min_length=min_length,
+                no_repeat_ngram_size=no_repeat_ngram_size,
+                num_beams=num_beams,
+                do_sample=False,
+            )[0]
+
+            all_output_ids.append(output_ids)
+
+    decoded_chunks = tokenizer.batch_decode(all_output_ids, skip_special_tokens=False, clean_up_tokenization_spaces=True)
+    for i in range(len(decoded_chunks)):
+        decoded_chunks[i] = decoded_chunks[i].split(tokenizer.sep_token)[1]
+        decoded_chunks[i] = decoded_chunks[i].split(tokenizer.eos_token)[0]
+
+    if len(decoded_chunks) > 1:
+        new_article = " ".join(decoded_chunks)
+        summary = summarize_with_rugpt3(article=new_article, model_name=model_name, tokenizer=tokenizer, model=model, prefix_ids=prefix_ids, params=params)
+    else:
+        summary = decoded_chunks[0]
+
+    return summary
+
+def summarize_text(article, model_name, tokenizer, model, prefix_ids, params):
+    # Настройка параметров
+    device = params.get("device", "cuda" if torch.cuda.is_available() else "cpu")
+    no_repeat_ngram_size = params.get("no_repeat_ngram_size", 2)
+    num_beams = params.get("num_beams", 4)
+    add_special_tokens = params.get("add_special_tokens", True)
+    do_sample = params.get("do_sample", False)
+    temperature = params.get("temperature", 0)
+    top_p = params.get("top_p", 1)
+    overlapping = params.get("overlapping", 0)
+
+    input_ids = tokenizer(
+        article,
+        return_tensors="pt",
+        padding=False,
+        truncation=False,   
+        add_special_tokens=add_special_tokens
+    )["input_ids"]
+
+    # Количество токенов в тексте
+    tokens = input_ids.squeeze(0)
+    token_count = len(tokens)
+
+    # Лимит модели по количеству токенов
+    max_token_count = getattr(model.config, "max_position_embeddings", 512)
+
+    available_chunk_len = max_token_count - len(prefix_ids)
+    stride = int(available_chunk_len * (1 - overlapping))
+
+    chunks = [tokens[i:i + available_chunk_len] for i in range(0, token_count, stride)]
+    chunks = [chunk for chunk in chunks if len(chunk) > 0]
+
+    with torch.inference_mode():
+        all_output_ids = []
+        for chunk_ids in chunks:
+        # for chunk_ids in tqdm(chunks, desc="Summarizing chunks"):
+            max_new_tokens = max(int(len(chunk_ids) * 0.35), 200)
+            min_length = max(int(len(chunk_ids) * 0.15), 50)
+
+            if len(prefix_ids) > 0:
+                chunk_ids = torch.cat((prefix_ids, chunk_ids), dim=0).unsqueeze(0).to(device)
+            else:
+                chunk_ids = chunk_ids.unsqueeze(0).to(device)
+
+            output_ids = model.generate(
+                input_ids=chunk_ids,
+                max_new_tokens=max_new_tokens,
+                min_length=min_length,
+                no_repeat_ngram_size=no_repeat_ngram_size,
+                num_beams=num_beams,
+                do_sample=do_sample,
+                temperature=temperature,
+                top_p=top_p,
+            )[0]
+
+            all_output_ids.append(output_ids)
+
+    decoded_chunks = tokenizer.batch_decode(all_output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+
+    if len(decoded_chunks) > 1:
+        new_article = " ".join(decoded_chunks)
+        summary = summarize_text(article=new_article, model_name=model_name, tokenizer=tokenizer, model=model, prefix_ids=prefix_ids, params=params)
+    else:
+        summary = decoded_chunks[0]
+
     return summary

@@ -1,4 +1,4 @@
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers import T5ForConditionalGeneration, GPT2Tokenizer
 import logging
 
 from qdrant import get_chunks, compare_embeddings
@@ -7,20 +7,15 @@ from summarize import summarize_text
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Model")
 
-model_name = "csebuetnlp/mT5_m2o_russian_crossSum"
+model_name = "RussianNLP/FRED-T5-Summarizer"
 
-model = AutoModelForSeq2SeqLM.from_pretrained(model_name, trust_remote_code=True).to("cuda")
-tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, legacy=False, use_fast=False)
+model = T5ForConditionalGeneration.from_pretrained("RussianNLP/FRED-T5-Summarizer")
+tokenizer = GPT2Tokenizer.from_pretrained("RussianNLP/FRED-T5-Summarizer", eos_token="</s>")
 
 params = {
     "device": "cuda",
-    "max_length": 512,
-    "min_length": 30,
-    "no_repeat_ngram_size": 4,
-    "add_special_tokens": False,
-    "num_beams": 10,
-    "max_new_tokens": 200,
-    "top_p": 0.7
+    "no_repeat_ngram_size": 2,
+    "num_beams": 4,
 }
 
 def answer_user_question(user_id, question):
