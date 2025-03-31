@@ -1,7 +1,11 @@
 import pandas as pd
-from datasets import load_dataset, Dataset
+from datasets import Dataset, load_dataset
 
-def initialize_dataset(dataset_name, number_of_tests, language="russian"):
+
+def initialize_dataset(dataset_name: str, number_of_tests: int, language="russian") -> Dataset:
+    """
+    Инициализирует датасет с помощью библиотеки datasets.
+    """
     dataset = load_dataset(dataset_name, language)
     test_data = dataset["test"]
 
@@ -14,7 +18,10 @@ def initialize_dataset(dataset_name, number_of_tests, language="russian"):
 
     return filtered_dataset
 
-def initialize_csv_dataset(file_path, number_of_tests):
+def initialize_csv_dataset(file_path: str, number_of_tests: int) -> Dataset:
+    """
+    Инициализирует датасет из файла .csv.
+    """
     df = pd.read_csv(file_path, delimiter=";")
 
     filtered_df = df.dropna(subset=["cleaned", "summarization"])

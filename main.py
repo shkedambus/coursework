@@ -1,16 +1,16 @@
-import time
 import os
-import gdown
+import time
+
 import fitz
+import gdown
 
 from chunking import hybrid_chunking, merge_short_chunks
-from qdrant import embedd_chunks, update_db, inspect_collection, clear_collection
 from generate_answer import answer_user_question
+from qdrant import (clear_collection, embedd_chunks, inspect_collection,
+                    update_db)
 
-import logging
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Program")
+from logger import get_logger
+logger = get_logger("Console app")
 
 def extract_text_from_pdf(pdf_path):
     doc = fitz.open(pdf_path)
@@ -51,7 +51,7 @@ def main_menu():
                 chunks = hybrid_chunking(pdf_text)
                 chunks = merge_short_chunks(chunks)
                 embeddings = embedd_chunks(chunks)
-                update_db(collection_name="main", chunks=chunks, embeddings=embeddings, user_id=0)
+                update_db(collection_name="rag", chunks=chunks, embeddings=embeddings, user_id=0)
             
         except Exception as e:
             print("Произошла ошибка:", e, end="\n")
@@ -65,12 +65,12 @@ def main_menu():
         answer = answer_user_question(user_id=0, question=question)
         print(answer)
     elif option == 3:
-        clear_collection(collection_name="main")
+        clear_collection(collection_name="rag")
     elif option == 4:
-        inspect_collection(collection_name="main")
+        inspect_collection(collection_name="rag")
 
     time.sleep(1)
     main_menu()
 
-print("Привет! Пришли мне ссылку на PDF-документ(ы) - я добавлю его(их) в базу. Или просто задай вопрос!")
+print("\nПривет! Пришли мне ссылку на PDF-документ(ы) - я добавлю его(их) в базу. Или просто задай вопрос!")
 main_menu()
