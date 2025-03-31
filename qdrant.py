@@ -10,7 +10,9 @@ from sentence_transformers import SentenceTransformer
 # Эмбеддинг-модель
 EMBEDDING_MODEL_NAME = "Alibaba-NLP/gte-Qwen2-1.5B-instruct"
 VECTOR_SIZE = 1536
-embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME, trust_remote_code=True, device="cuda")
+embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME, trust_remote_code=True, device="cpu")
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Подключаемся к локальному Qdrant
 QDRANT_HOST = "localhost"
@@ -98,12 +100,17 @@ def embedd_chunks(chunks: List[str]) -> torch.Tensor:
     """
     chunks = list(set(chunks))
 
+    embedding_model.to(device)
+
     embeddings = embedding_model.encode(
         chunks,
         batch_size=32,
         convert_to_tensor=True,    # Ускоряет на GPU
         normalize_embeddings=True  # Ускоряет поиск по cosine similarity
     )
+
+    embedding_model.to("cpu")
+    torch.cuda.empty_cache()
 
     return embeddings
 
@@ -157,7 +164,13 @@ def get_chunks(collection_name: str, query: str, user_id: int = 0) -> List[str]:
     """
     Находит наиболее релевантные чанки из коллекции по эмбеддингу запроса.
     """
+    embedding_model.to(device)
+
     query_vector = embedding_model.encode([query])[0]
+
+    embedding_model.to("cpu")
+    torch.cuda.empty_cache()
+
     retrieved_chunks = similarity_search(collection_name, query_vector, user_id)
     return retrieved_chunks
 
@@ -203,6 +216,8 @@ def compare_embeddings(predictions: List[str], references: List[str]) -> torch.T
     """
     Сравнивает эмбеддинги предсказаний и эталонных ответов, возвращая матрицу сходства.
     """
+    embedding_model.to(device)
+
     prediction_embeddings = embedding_model.encode(
         predictions,
         batch_size=32,
@@ -217,10 +232,17 @@ def compare_embeddings(predictions: List[str], references: List[str]) -> torch.T
         normalize_embeddings=True  # Ускоряет поиск по cosine similarity
     )
 
-    prediction_embeddings = prediction_embeddings.to("cuda")
-    reference_embeddings = reference_embeddings.to("cuda")
+    prediction_embeddings = prediction_embeddings.to(device)
+    reference_embeddings = reference_embeddings.to(device)
+
+    embedding_model.to("cpu")
+    torch.cuda.empty_cache()
 
     scores = cosine_similarity_pytorch(prediction_embeddings, reference_embeddings)
+
+    prediction_embeddings = prediction_embeddings.to("cpu")
+    reference_embeddings = reference_embeddings.to("cpu")
+
     return scores
 
 def classify_prediction(prediction: str, good_references: List[str], bad_references: List[str]) -> str:

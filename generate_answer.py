@@ -5,8 +5,6 @@ from qdrant import compare_embeddings, get_chunks
 from summarize import summarize_text
 from utils import compute_prefix_ids
 
-print("\nresetting...")
-
 torch.cuda.empty_cache()
 torch.cuda.reset_peak_memory_stats()
 
@@ -28,13 +26,9 @@ model_params = {
     "prefix": "",
 }
 
-print("\nmodel.eval()...")
-
 device = model_params.get("device", "cuda" if torch.cuda.is_available() else "cpu")
 model = model.to(device)
 model.eval()
-
-print("\nthat's all")
 
 prefix_ids = compute_prefix_ids(tokenizer=tokenizer, prefix=model_params.get("prefix", ""))
 

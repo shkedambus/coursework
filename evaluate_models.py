@@ -20,12 +20,12 @@ bleu = evaluate.load("sacrebleu")
 bertscore = evaluate.load("bertscore")
 
 # Инициализация датасета
-NUMBER_OF_TESTS = 1
+NUMBER_OF_TESTS = 10
 DATASET_NAME = "csebuetnlp/xlsum"
 LANGUAGE = "russian"
 FILE_PATH = "lda_train.csv"
 
-# dataset = initialize_dataset(dataset_name=dataset_name, number_of_tests=number_of_tests, language=language)
+# dataset = initialize_dataset(dataset_name=DATASET_NAME, number_of_tests=NUMBER_OF_TESTS, language=LANGUAGE)
 dataset = initialize_csv_dataset(file_path=FILE_PATH, number_of_tests=NUMBER_OF_TESTS)
 
 def evaluate_single_model(model_name: str, model_info: dict, dataset: Dataset) -> dict:
@@ -92,6 +92,8 @@ def evaluate_single_model(model_name: str, model_info: dict, dataset: Dataset) -
     }
 
     return result
+
+# evaluate_single_model(model_name="RussianNLP/FRED-T5-Summarizer", model_info=model_info, dataset=dataset)
 
 def evaluate_models(model_info: dict, dataset: Dataset) -> dict:
     """
