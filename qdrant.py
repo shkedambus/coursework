@@ -4,7 +4,7 @@ from typing import List
 
 import torch
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, Filter, PointStruct, VectorParams
+from qdrant_client.models import Distance, Filter, VectorParams, PointStruct, PointIdsList
 from sentence_transformers import SentenceTransformer
 
 # Эмбеддинг-модель
@@ -58,20 +58,81 @@ def clear_collection(collection_name: str) -> None:
 
     logger.info(f"Все данные в коллекции '{collection_name}' удалены.")
 
+def get_all_chunks(collection_name: str, user_id: int) -> List:
+    """
+    Получает все чанки из коллекции, в которых user_id содержится в списке user_ids.
+    """
+    all_hits = []
+    next_page_token = None
+
+    batch_limit = 100
+
+    scroll_filter = None
+    if user_id != -1:
+        scroll_filter = {"must": [{"key": "user_ids", "match": {"value": user_id}}]}
+
+    while True:
+        # Если next_page_token не None, добавляем его в параметры запроса
+        scroll_params = {
+            "collection_name": collection_name,
+            "scroll_filter": scroll_filter,
+            "limit": batch_limit,
+            "with_vectors": True
+        }
+        if next_page_token:
+            scroll_params["next_page_token"] = next_page_token
+
+        hits, next_page_token = qdrant_client.scroll(**scroll_params)
+        all_hits.extend(hits)
+
+        # Если возвращено меньше записей, чем лимит, или нет следующей страницы, значит данные закончились
+        if not next_page_token or len(hits) < batch_limit:
+            break
+
+    return all_hits
+
 def delete_user_data(collection_name: str, user_id: int) -> None:
     """
-    Удаляет все данные, связанные с конкретным пользователем, из указанной коллекции.
+    Удаляет данные, связанные с конкретным пользователем, из указанной коллекции.
+    Для каждого найденного чанка:
+      - если чанк принадлежит нескольким пользователям, удаляет user_id из списка user_ids
+      - если чанк принадлежит только данному пользователю, удаляет весь чанк из коллекции
     """
-    if qdrant_client.collection_exists(collection_name):
-        qdrant_client.delete(
-            collection_name=collection_name,
-            points_selector={"filter": {"must": [{"key": "user_id", "match": {"value": user_id}}]}}
-        )
-        logger.info(f"Все данные пользователя {user_id} удалены из коллекции '{collection_name}'.")
-    else:
+    if not qdrant_client.collection_exists(collection_name):
         logger.info(f"Коллекция '{collection_name}' не существует.")
+        return
 
-def inspect_collection(collection_name: str, limit: int = 20) -> None:
+    hits = get_all_chunks(collection_name=collection_name, user_id=user_id)
+    updated_points = []
+
+    for hit in hits:
+        payload = hit.payload
+        user_ids = payload.get("user_ids", [])
+        if user_id in user_ids:
+            if len(user_ids) > 1:
+                # Если чанк принадлежит нескольким пользователям, удаляем заданного пользователя из списка
+                user_ids.remove(user_id)
+                payload["user_ids"] = user_ids
+                updated_point = PointStruct(id=hit.id, vector=hit.vector, payload=payload)
+                updated_points.append(updated_point)
+            else:
+                # Если чанк принадлежит только данному пользователю, удаляем его
+                qdrant_client.delete(
+                    collection_name=collection_name,
+                    points_selector=PointIdsList(points=[hit.id])
+                )
+                logger.info(f"Удалён чанк {hit.id}, принадлежащий пользователю {user_id}")
+
+    # Обновляем чанки в базе
+    if updated_points:
+        qdrant_client.upsert(
+            collection_name=collection_name,
+            points=updated_points
+        )
+
+    logger.info(f"Обработка удаления данных пользователя {user_id} завершена в коллекции '{collection_name}'.")
+
+def inspect_collection(collection_name: str, user_id: int = -1) -> None:
     """
     Выводит информацию о содержимом коллекции - ID пользователей и связанные с ними тексты.
     """
@@ -79,10 +140,7 @@ def inspect_collection(collection_name: str, limit: int = 20) -> None:
         logger.info(f"Коллекция '{collection_name}' не существует.")
         return
 
-    points = qdrant_client.scroll(
-        collection_name=collection_name,
-        limit=limit
-    )[0]
+    points = get_all_chunks(collection_name=collection_name, user_id=user_id)
 
     if not points:
         logger.info(f"Коллекция '{collection_name}' пуста.")
@@ -90,7 +148,7 @@ def inspect_collection(collection_name: str, limit: int = 20) -> None:
     
     logger.info(f"Данные в коллекции '{collection_name}':")
     for point in points:
-        logger.info(f"ID: {point.id}, User ID: {point.payload.get('user_id', 'N/A')}")
+        logger.info(f"ID: {point.id}, User IDs: {point.payload.get('user_ids', 'N/A')}")
         logger.info(f"Текст: {point.payload.get('text', 'Нет текста')}")
         logger.info("-" * 50)
 
@@ -114,59 +172,72 @@ def embedd_chunks(chunks: List[str]) -> torch.Tensor:
 
     return embeddings
 
-# Функция для создания уникального хэша для текста чанка
 def hash_text(text: str) -> str:
     """
     Создает уникальный хэш для текста чанка с использованием алгоритма SHA-256.
     """
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-# Функция для проверки, есть ли уже такой хэш в базе
-def is_duplicate_chunk(collection_name: str, chunk_hash: str) -> bool:
+def get_existing_chunk(collection_name: str, chunk_hash: str):
     """
-    Проверяет, существует ли в коллекции чанк с таким же хэшем.
+    Возвращает существующий чанк по заданному хэшу или None, если такого чанка нет.
     """
     existing_chunks, _ = qdrant_client.scroll(
         collection_name=collection_name,
         scroll_filter={"must": [{"key": "chunk_hash", "match": {"value": chunk_hash}}]},
         limit=1
     )
-    return len(existing_chunks) > 0
+    if existing_chunks:
+        return existing_chunks[0]
+    return None
 
 def update_db(collection_name: str, chunks: List[str], embeddings: torch.Tensor, user_id: int) -> None:
     """
-    Добавляет уникальные чанки и их эмбеддинги в коллекцию Qdrant, исключая дубликаты.
+    Добавляет уникальные чанки и их эмбеддинги в коллекцию Qdrant, 
+    используя метаданные в виде списка user_ids.
+    Если чанк уже существует, и пользователь не привязан к нему, добавляет его в список.
     """
-    unique_chunks = []
+    new_points = []
+    updated_points = []
+
     for chunk, emb in zip(chunks, embeddings):
         chunk_hash = hash_text(chunk)
+        existing_chunk = get_existing_chunk(collection_name, chunk_hash)
 
-        if is_duplicate_chunk(collection_name, chunk_hash):
-            continue
+        if existing_chunk:
+            # Проверяем, имеется ли user_ids, и добавляем, если current user_id отсутствует
+            user_ids = existing_chunk.payload.get("user_ids", [])
+            if user_id not in user_ids:
+                user_ids.append(user_id)
+                existing_chunk.payload["user_ids"] = user_ids
+                updated_point = PointStruct(id=existing_chunk.id, vector=emb, payload=existing_chunk.payload)
+                updated_points.append(updated_point)
+        else:
+            # Чанк отсутствует - создаем новый с user_ids в виде списка
+            point_id = int(uuid.uuid4().int % 1e9)
+            payload = {"text": chunk, "user_ids": [user_id], "chunk_hash": chunk_hash}
+            new_point = PointStruct(id=point_id, vector=emb, payload=payload)
+            new_points.append(new_point)
 
-        point_id = int(uuid.uuid4().int % 1e9)
+    if new_points:
+        qdrant_client.upsert(collection_name=collection_name, points=new_points)
+        logger.info(f"Добавлено {len(new_points)} новых чанков для пользователя {user_id}")
 
-        unique_chunks.append(
-            PointStruct(
-                id=point_id,
-                vector=emb,
-                payload={"text": chunk, "user_id": user_id, "chunk_hash": chunk_hash}
-            )
-        )
+    if updated_points:
+        qdrant_client.upsert(collection_name=collection_name, points=updated_points)
+        logger.info(f"Обновлено {len(updated_points)} существующих чанков для пользователя {user_id}")
 
-    if unique_chunks:
-        qdrant_client.upsert(collection_name=collection_name, points=unique_chunks)
-        logger.info(f"Добавлено {len(unique_chunks)} новых чанков для пользователя {user_id}")
-    else:
-        logger.info("Все чанки уже есть в базе, ничего не добавлено.")
-
-def get_chunks(collection_name: str, query: str, user_id: int = 0) -> List[str]:
+def get_relevant_chunks(collection_name: str, query: str, user_id: int = 0) -> List[str]:
     """
     Находит наиболее релевантные чанки из коллекции по эмбеддингу запроса.
     """
     embedding_model.to(device)
 
-    query_vector = embedding_model.encode([query])[0]
+    query_vector = embedding_model.encode(
+        [query],
+        convert_to_tensor=True,    # Ускоряет на GPU
+        normalize_embeddings=True  # Ускоряет поиск по cosine similarity
+    )[0]
 
     embedding_model.to("cpu")
     torch.cuda.empty_cache()
@@ -177,16 +248,21 @@ def get_chunks(collection_name: str, query: str, user_id: int = 0) -> List[str]:
 def similarity_search(collection_name: str, query_vector: torch.Tensor, user_id: int, threshold: float = 0.3, top_k: int = 10) -> List[str]:
     """
     Выполняет поиск ближайших чанков в коллекции по косинусному сходству и возвращает тексты.
+    Результаты фильтруются по тому, чтобы заданный user_id присутствовал в списке user_ids.
     """
     search_result = qdrant_client.search(
         collection_name=collection_name,
         query_vector=query_vector,
         limit=top_k,
         score_threshold=threshold,
-        query_filter={"must": [{"key": "user_id", "match": {"value": user_id}}]}
+        query_filter={"must": [{"key": "user_ids", "match": {"value": user_id}}]}
     )
 
     retrieved_texts = [hit.payload["text"] for hit in search_result]
+
+    for hit in search_result:
+        logger.info(f"Найден чанк (score={hit.score}, len={len(hit.payload['text'])}):\n{hit.payload['text']}")
+
     return retrieved_texts
 
 def average_score(scores: torch.Tensor) -> float:
@@ -205,11 +281,11 @@ def cosine_similarity_pytorch(tensor1: torch.Tensor, tensor2: torch.Tensor) -> t
     Вычисляет косинусное сходство между двумя тензорами, используя PyTorch.
     """     
     # Нормализуем векторы
-    tensor1_normalized = tensor1 / tensor1.norm(dim=1, keepdim=True)
-    tensor2_normalized = tensor2 / tensor2.norm(dim=1, keepdim=True)
+    # tensor1_normalized = tensor1 / tensor1.norm(dim=1, keepdim=True)
+    # tensor2_normalized = tensor2 / tensor2.norm(dim=1, keepdim=True)
 
     # Вычисляем косинусное сходство
-    cosine_sim = torch.mm(tensor1_normalized, tensor2_normalized.transpose(0, 1))
+    cosine_sim = torch.mm(tensor1, tensor2.transpose(0, 1))
     return cosine_sim
 
 def compare_embeddings(predictions: List[str], references: List[str]) -> torch.Tensor:

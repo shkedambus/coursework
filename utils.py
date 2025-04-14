@@ -4,7 +4,7 @@ import torch
 from razdel import tokenize
 
 
-def split_into_chunks(tokens: torch.Tensor, chunk_size: int, overlap: float = 0.0) -> List[torch.Tensor]:
+def split_tokens_into_chunks(tokens: torch.Tensor, chunk_size: int, overlap: float = 0.0) -> List[torch.Tensor]:
     """
     Делит токены на чанки с возможным перекрытием.
     """
@@ -19,7 +19,7 @@ def compute_prefix_ids(tokenizer, prefix: str) -> torch.Tensor:
         return tokenizer(prefix, return_tensors="pt", add_special_tokens=False)["input_ids"].squeeze(0)
     return torch.tensor([], dtype=torch.long)
 
-def preprocess_text(text: str) -> str:
+def rouge_tokenizer(text: str) -> str:
     """
     Преобразует текст в токенизированную строку для оценки с помощью метрики ROUGE.
 

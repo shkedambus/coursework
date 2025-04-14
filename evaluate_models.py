@@ -11,8 +11,8 @@ from tqdm import tqdm
 
 from config import model_info
 from data import initialize_csv_dataset, initialize_dataset
-from qdrant import classify_prediction, embedd_chunks, get_chunks, update_db
-from utils import compute_prefix_ids, preprocess_text
+from qdrant import classify_prediction, embedd_chunks, get_relevant_chunks, update_db
+from utils import compute_prefix_ids, rouge_tokenizer
 
 # Метрики для оценки моделей
 rouge = evaluate.load("rouge")
@@ -67,7 +67,7 @@ def evaluate_single_model(model_name: str, model_info: dict, dataset: Dataset) -
     references = [[sample["reference"]] for sample in predictions_dataset]
 
     # Метрики на уровне всех текстов
-    rouge_result = rouge.compute(predictions=predictions, references=references, tokenizer=preprocess_text)
+    rouge_result = rouge.compute(predictions=predictions, references=references, tokenizer=rouge_tokenizer)
     bleu_result = bleu.compute(predictions=predictions, references=references, tokenize="13a")
     bertscore_result = bertscore.compute(predictions=predictions, references=references, lang="ru")
 
@@ -76,7 +76,7 @@ def evaluate_single_model(model_name: str, model_info: dict, dataset: Dataset) -
             {
                 "prediction": pred,
                 "reference": ref[0],
-                "rouge": rouge.compute(predictions=[pred], references=[ref], tokenizer=preprocess_text),
+                "rouge": rouge.compute(predictions=[pred], references=[ref], tokenizer=rouge_tokenizer),
                 "bleu": bleu.compute(predictions=[pred], references=[ref], tokenize="13a"),
                 "bertscore": bertscore.compute(predictions=[pred], references=[ref], lang="ru")
             }
@@ -154,7 +154,7 @@ def evaluate_params(model_info: dict, dataset: Dataset, model_name: str, param_g
                     references = [[sample["reference"]] for sample in predictions_dataset]
 
                     # Метрики на уровне всех текстов
-                    rouge_result = rouge.compute(predictions=predictions, references=references, tokenizer=preprocess_text)
+                    rouge_result = rouge.compute(predictions=predictions, references=references, tokenizer=rouge_tokenizer)
                     bleu_result = bleu.compute(predictions=predictions, references=references, tokenize="13a")
                     bertscore_result = bertscore.compute(predictions=predictions, references=references, lang="ru")
 
@@ -163,7 +163,7 @@ def evaluate_params(model_info: dict, dataset: Dataset, model_name: str, param_g
                             {
                                 "prediction": pred,
                                 "reference": ref[0],
-                                "rouge": rouge.compute(predictions=[pred], references=[ref], tokenizer=preprocess_text),
+                                "rouge": rouge.compute(predictions=[pred], references=[ref], tokenizer=rouge_tokenizer),
                                 "bleu": bleu.compute(predictions=[pred], references=[ref], tokenize="13a"),
                                 "bertscore": bertscore.compute(predictions=[pred], references=[ref], lang="ru")
                             }
@@ -291,8 +291,8 @@ def test_model(model_name: str, model_info: dict, dataset: Dataset) -> dict:
     scores = {}
     for idx, metric in enumerate(per_text_metrics):
         prediction = metric["prediction"]
-        good_prediction = get_chunks("good_predictions", prediction)
-        bad_prediction = get_chunks("bad_predictions", prediction)
+        good_prediction = get_relevant_chunks("good_predictions", prediction)
+        bad_prediction = get_relevant_chunks("bad_predictions", prediction)
         
         scores[idx] = classify_prediction(prediction, good_prediction, bad_prediction)
 

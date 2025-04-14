@@ -3,13 +3,14 @@ from typing import List
 
 import nltk
 import numpy as np
-from nltk.tokenize import word_tokenize
+from nltk.tokenize import word_tokenize, sent_tokenize
 from razdel import sentenize
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import normalize
 
-nltk.download("punkt")
-nltk.download("punkt_tab")
+# Нужно скачать 1 раз
+# nltk.download("punkt")
+# nltk.download("punkt_tab")
 
 punctuation = set(string.punctuation)
 
@@ -120,3 +121,47 @@ def merge_short_chunks(chunks: List, min_length: int = 80) -> List[str]:
         merged_chunks[-1] += " " + buffer
 
     return merged_chunks
+
+def split_text_into_chunks(text: str, chunk_size: int = 512, overlap: int = 50) -> List[str]:
+    """
+    Разбивает текст на чанки, не превышающие chunk_size, с перекрытием overlap.
+    """
+    sentences = sent_tokenize(text, language='russian')
+    chunks = []
+    current_chunk = []
+    current_tokens = 0
+
+    for sentence in sentences:
+        # Подсчёт токенов в предложении (простейший способ — разделение по пробелам)
+        sentence_tokens = sentence.split()
+        sentence_token_count = len(sentence_tokens)
+        
+        # Если добавление предложения не превышает лимит
+        if current_tokens + sentence_token_count <= chunk_size:
+            current_chunk.append(sentence)
+            current_tokens += sentence_token_count
+        else:
+            # Формируем текущий чанк и добавляем его в список
+            chunk_text = " ".join(current_chunk)
+            chunks.append(chunk_text)
+            
+            # Определяем перекрытие: берем последние overlap токенов предыдущего чанка
+            chunk_tokens = chunk_text.split()
+            if overlap < len(chunk_tokens):
+                overlap_tokens = chunk_tokens[-overlap:]
+            else:
+                overlap_tokens = chunk_tokens
+
+            # Начинаем новый чанк с перекрывающими токенами
+            current_chunk = [" ".join(overlap_tokens)]
+            current_tokens = len(overlap_tokens)
+            
+            # Добавляем текущее предложение в новый чанк
+            current_chunk.append(sentence)
+            current_tokens += sentence_token_count
+
+    # Добавляем оставшийся чанк, если он не пустой
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+    
+    return chunks
