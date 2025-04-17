@@ -1,23 +1,57 @@
 version: "3.8"
+
 services:
   bot:
     build:
-      context: .
+      context: ./bot
       dockerfile: Dockerfile
     container_name: rag_bot
     env_file:
       - ./.env
     volumes:
-      - ./:/app
+      - ./bot:/app
+      - ./shared:/app/shared
+    depends_on:
+      - retriever
+      - generator
+      - qdrant
+
+  retriever:
+    build:
+      context: ./retriever
+      dockerfile: Dockerfile
+    container_name: rag_retriever
+    env_file:
+      - ./.env
+    volumes:
+      - ./retriever:/app
+      - ./shared:/app/shared
+    ports:
+      - "8001:8001"
     depends_on:
       - qdrant
+
+  generator:
+    build:
+      context: ./generator
+      dockerfile: Dockerfile
+    container_name: rag_generator
+    env_file:
+      - ./.env
+    volumes:
+      - ./generator:/app
+      - ./shared:/app/shared
+    ports:
+      - "8002:8002"
     deploy:
-          resources:
-            reservations:
-              devices:
-                - driver: nvidia
-                  count: 1
-                  capabilities: [gpu]
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      - qdrant
 
   qdrant:
     image: qdrant/qdrant:latest

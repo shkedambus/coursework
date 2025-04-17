@@ -3,7 +3,7 @@ from transformers import (AutoModelForCausalLM, AutoModelForSeq2SeqLM,
                           MBartForConditionalGeneration, MBartTokenizer,
                           T5ForConditionalGeneration, T5Tokenizer)
 
-from summarize import summarize_text, summarize_with_rugpt3
+from generator.summarize import summarize_text, summarize_with_rugpt3
 
 base_params = {
     "device": "cuda",

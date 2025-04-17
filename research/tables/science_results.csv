@@ -1,0 +1,15 @@
+model,rouge-1,rouge-2,rouge-L,rouge-Lsum,bleu-score,bertscore-precision,bertscore-recall,bertscore-f1,time (seconds)
+sarahai/ru-sum,0.595,0.437,0.376,0.376,3.296,0.706,0.669,0.687,1582.07
+sacreemure/med_t5_summ_ru,0.666,0.511,0.431,0.432,8.411,0.716,0.702,0.708,2357.758
+csebuetnlp/mT5_m2o_russian_crossSum,0.373,0.259,0.257,0.256,0.071,0.673,0.612,0.641,1818.143
+RussianNLP/FRED-T5-Summarizer,0.718,0.588,0.491,0.496,21.379,0.733,0.748,0.74,3640.325
+IlyaGusev/rugpt3medium_sum_gazeta,0.474,0.322,0.295,0.295,0.203,0.668,0.624,0.645,1131.631
+Nehc/mT5_ru_XLSum,0.569,0.402,0.344,0.345,1.775,0.682,0.65,0.665,1711.662
+utrobinmv/t5_summary_en_ru_zh_base_2048,0.632,0.431,0.36,0.36,2.412,0.672,0.653,0.662,1468.837
+IlyaGusev/rut5_base_sum_gazeta,0.654,0.486,0.397,0.397,5.921,0.706,0.687,0.696,2229.752
+IlyaGusev/mbart_ru_sum_gazeta,0.471,0.238,0.286,0.286,0.051,0.514,0.508,0.511,1746.989
+csebuetnlp/mT5_multilingual_XLSum,0.564,0.397,0.344,0.344,1.57,0.675,0.646,0.66,2077.792
+sansmislom/mt5-small-finetuned-gazeta-ru,0.455,0.297,0.284,0.284,0.036,0.643,0.61,0.626,1384.591
+sarahai/ruT5-base-summarizer,0.68,0.495,0.388,0.389,4.339,0.693,0.684,0.688,1383.062
+utrobinmv/t5_summary_en_ru_zh_large_2048,0.685,0.525,0.437,0.437,8.252,0.723,0.711,0.716,2949.623
+Falconsai/text_summarization,0.449,0.295,0.292,0.292,0.114,0.57,0.556,0.563,3338.961

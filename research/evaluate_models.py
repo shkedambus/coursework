@@ -12,7 +12,7 @@ from tqdm import tqdm
 from config import model_info
 from data import initialize_csv_dataset, initialize_dataset
 from qdrant import classify_prediction, embedd_chunks, get_relevant_chunks, update_db
-from utils import compute_prefix_ids, rouge_tokenizer
+from research.utils import compute_prefix_ids, rouge_tokenizer
 
 # Метрики для оценки моделей
 rouge = evaluate.load("rouge")
