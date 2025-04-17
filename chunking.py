@@ -9,8 +9,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import normalize
 
 # Нужно скачать 1 раз
-# nltk.download("punkt")
-# nltk.download("punkt_tab")
+nltk.download("punkt")
+nltk.download("punkt_tab")
 
 punctuation = set(string.punctuation)
 

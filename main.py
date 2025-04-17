@@ -17,7 +17,7 @@ import nltk
 from qdrant import embedding_model
 
 # Нужно скачать 1 раз
-# nltk.download('punkt')
+nltk.download('punkt')
 
 ADMIN_USER_ID = 362592209
 

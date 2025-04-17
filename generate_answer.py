@@ -29,7 +29,7 @@ model_params = {
 }
 
 device = model_params.get("device", "cuda" if torch.cuda.is_available() else "cpu")
-model = model.to("cpu")
+model = model.to(device)
 model.eval()
 
 def answer_user_question(user_id: int, question: str) -> str:
@@ -56,7 +56,7 @@ def answer_user_question(user_id: int, question: str) -> str:
 
     if context:
         try:
-            model.to(device)
+            # model.to(device)
             response = summarize_text(
                 article=context, 
                 model_name=model_name, 
@@ -66,7 +66,7 @@ def answer_user_question(user_id: int, question: str) -> str:
                 final_prefix_ids=final_prefix_ids, 
                 params=model_params
             )
-            model.to("cpu")
+            # model.to("cpu")
         except Exception as e:
             logger.error(f"Ошибка суммаризации: user_id={user_id}, question={question}, error={e}")
             return "Ошибка обработки запроса."

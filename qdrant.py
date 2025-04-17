@@ -1,6 +1,8 @@
+import os
 import hashlib
 import uuid
 from typing import List
+from dotenv import load_dotenv
 
 import torch
 from qdrant_client import QdrantClient
@@ -12,11 +14,13 @@ EMBEDDING_MODEL_NAME = "Alibaba-NLP/gte-Qwen2-1.5B-instruct"
 VECTOR_SIZE = 1536
 embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME, trust_remote_code=True, device="cpu")
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+# device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Подключаемся к локальному Qdrant
-QDRANT_HOST = "localhost"
-QDRANT_PORT = 6333
+load_dotenv()
+
+# Подключаемся к Qdrant
+QDRANT_HOST = os.getenv("QDRANT_HOST")
+QDRANT_PORT = os.getenv("QDRANT_PORT")
 qdrant_client = QdrantClient(QDRANT_HOST, port=QDRANT_PORT)
 
 from logger import get_logger
@@ -158,7 +162,7 @@ def embedd_chunks(chunks: List[str]) -> torch.Tensor:
     """
     chunks = list(set(chunks))
 
-    embedding_model.to(device)
+    # embedding_model.to(device)
 
     embeddings = embedding_model.encode(
         chunks,
@@ -167,8 +171,8 @@ def embedd_chunks(chunks: List[str]) -> torch.Tensor:
         normalize_embeddings=True  # Ускоряет поиск по cosine similarity
     )
 
-    embedding_model.to("cpu")
-    torch.cuda.empty_cache()
+    # embedding_model.to("cpu")
+    # torch.cuda.empty_cache()
 
     return embeddings
 
@@ -231,7 +235,7 @@ def get_relevant_chunks(collection_name: str, query: str, user_id: int = 0) -> L
     """
     Находит наиболее релевантные чанки из коллекции по эмбеддингу запроса.
     """
-    embedding_model.to(device)
+    # embedding_model.to(device)
 
     query_vector = embedding_model.encode(
         [query],
@@ -239,8 +243,8 @@ def get_relevant_chunks(collection_name: str, query: str, user_id: int = 0) -> L
         normalize_embeddings=True  # Ускоряет поиск по cosine similarity
     )[0]
 
-    embedding_model.to("cpu")
-    torch.cuda.empty_cache()
+    # embedding_model.to("cpu")
+    # torch.cuda.empty_cache()
 
     retrieved_chunks = similarity_search(collection_name, query_vector, user_id)
     return retrieved_chunks
@@ -292,7 +296,7 @@ def compare_embeddings(predictions: List[str], references: List[str]) -> torch.T
     """
     Сравнивает эмбеддинги предсказаний и эталонных ответов, возвращая матрицу сходства.
     """
-    embedding_model.to(device)
+    # embedding_model.to(device)
 
     prediction_embeddings = embedding_model.encode(
         predictions,
@@ -308,16 +312,16 @@ def compare_embeddings(predictions: List[str], references: List[str]) -> torch.T
         normalize_embeddings=True  # Ускоряет поиск по cosine similarity
     )
 
-    prediction_embeddings = prediction_embeddings.to(device)
-    reference_embeddings = reference_embeddings.to(device)
+    # prediction_embeddings = prediction_embeddings.to(device)
+    # reference_embeddings = reference_embeddings.to(device)
 
-    embedding_model.to("cpu")
-    torch.cuda.empty_cache()
+    # embedding_model.to("cpu")
+    # torch.cuda.empty_cache()
 
     scores = cosine_similarity_pytorch(prediction_embeddings, reference_embeddings)
 
-    prediction_embeddings = prediction_embeddings.to("cpu")
-    reference_embeddings = reference_embeddings.to("cpu")
+    # prediction_embeddings = prediction_embeddings.to("cpu")
+    # reference_embeddings = reference_embeddings.to("cpu")
 
     return scores
 
