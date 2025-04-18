@@ -1,6 +1,7 @@
 import string
 from typing import List
 
+import fitz
 import nltk
 import numpy as np
 from nltk.tokenize import word_tokenize, sent_tokenize
@@ -165,3 +166,67 @@ def split_text_into_chunks(text: str, chunk_size: int = 512, overlap: int = 50) 
         chunks.append(" ".join(current_chunk))
     
     return chunks
+
+def extract_pdf_structure(pdf_path: str, header_font_threshold: int = 14) -> str:
+    """
+    Извлекает текст из PDF-файла, сохраняя структуру: заголовки, абзацы и списки.
+    """
+    doc = fitz.open(pdf_path)
+    structured_text = []
+
+    for page in doc:
+        # Получаем словарное представление страницы
+        page_dict = page.get_text("dict")
+        
+        # Проходим по каждому блоку (обычно это абзацы или отдельные текстовые блоки)
+        for block in page_dict["blocks"]:
+            if block["type"] == 0:  # 0 означает текстовый блок
+                block_lines = []
+                for line in block["lines"]:
+                    line_text = ""
+                    max_font_size = 0
+                    
+                    # Объединяем все спаны в строку и определяем максимальный размер шрифта
+                    for span in line["spans"]:
+                        line_text += span["text"]
+                        if span["size"] > max_font_size:
+                            max_font_size = span["size"]
+                    
+                    # Если максимальный размер шрифта превышает порог, считаем строку заголовком
+                    if max_font_size >= header_font_threshold:
+                        # Добавляем пустые строки для визуального разделения
+                        block_lines.append("\n" + line_text.strip() + "\n")
+                    else:
+                        block_lines.append(line_text.strip())
+                
+                # Объединяем строки блока в один абзац
+                structured_text.append("\n".join(block_lines))
+                # Добавляем дополнительный перевод строки между блоками
+                structured_text.append("\n")
+    
+    return "\n".join(structured_text)
+
+def process_bullet_points(text: str) -> str:
+    """
+    Собирает буллет-поинты в тексте в свои блоки.
+    """
+    lines = text.splitlines()
+    structured_text = []
+    i = 0
+    n = len(lines)
+    
+    while i < n:
+        line = lines[i].strip()
+        if line == "•":
+            # Собираем все последующие непустые строки в блок
+            bullet_block = [line + " " + lines[i+1].strip() if i+1 < n else ""]
+            i += 2
+            while i < n and lines[i].strip():
+                bullet_block.append(lines[i].strip())
+                i += 1
+            structured_text.append("\n".join(bullet_block))
+        else:
+            structured_text.append(line)
+            i += 1
+    
+    return "\n".join(structured_text)

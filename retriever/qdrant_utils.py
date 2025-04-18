@@ -1,6 +1,6 @@
 import torch
 import hashlib, uuid
-from typing import List
+from typing import List, Optional
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, Filter, VectorParams, PointStruct, PointIdsList, MatchValue, FieldCondition
 
@@ -36,7 +36,7 @@ class QdrantIndexer:
             return existing_chunks[0]
         return None
 
-    def upsert_chunks(self, chunks: List[str], embeddings: torch.Tensor, user_id: int) -> None:
+    def upsert_chunks(self, file_names: List[str], chunks: List[str], embeddings: torch.Tensor, user_id: int) -> None:
         """
         Добавляет уникальные чанки и их эмбеддинги в коллекцию Qdrant, 
         используя метаданные в виде списка user_ids.
@@ -45,7 +45,7 @@ class QdrantIndexer:
         new_points = []
         updated_points = []
 
-        for chunk, emb in zip(chunks, embeddings):
+        for chunk, emb, fname in zip(chunks, embeddings, file_names):
             chunk_hash = self.hash_text(chunk)
             existing_chunk = self.get_existing_chunk(chunk_hash)
 
@@ -60,7 +60,7 @@ class QdrantIndexer:
             else:
                 # Чанк отсутствует - создаем новый с user_ids в виде списка
                 point_id = int(uuid.uuid4().int % 1e9)
-                payload = {"text": chunk, "user_ids": [user_id], "chunk_hash": chunk_hash}
+                payload = {"text": chunk, "user_ids": [user_id], "chunk_hash": chunk_hash, "file_name": fname}
                 new_point = PointStruct(id=point_id, vector=emb, payload=payload)
                 new_points.append(new_point)
 
@@ -82,7 +82,6 @@ class QdrantIndexer:
             query_vector=query_vector,
             limit=top_k,
             score_threshold=threshold,
-            # query_filter={"must": [{"key": "user_ids", "match": {"value": user_id}}]}
             query_filter=Filter(must=[{"key": "user_ids", "match": {"value": user_id}}])
         )
 
@@ -118,27 +117,28 @@ class QdrantIndexer:
 
         logger.info(f"Все данные в коллекции '{self.collection}' удалены.")
 
-    def get_all_chunks(self, user_id: int) -> list:
+    def get_all_chunks(self, user_id: int, file_name: Optional[str] = None) -> list:
         """
-        Возвращает все чанки, связанные с указанным user_id.
+        Возвращает все чанки, связанные с указанным user_id и file_name (если file_name задан).
         """
         all_hits = []
         batch_limit = 100
         next_page_token = None
 
-        q_filter = None
-        if user_id != -1:
-            q_filter = Filter(must=[
-                FieldCondition(
-                    key="user_ids",
-                    match=MatchValue(value=user_id)
-                )
-            ])
+        must_conditions = [
+            FieldCondition(key="user_ids", match=MatchValue(value=user_id))
+        ]
+        if file_name:
+            must_conditions.append(
+                FieldCondition(key="file_name", match=MatchValue(value=file_name))
+            )
+
+        scroll_filter = Filter(must=must_conditions)
 
         while True:
             hits, next_page_token = self.client.scroll(
                 collection_name=self.collection,
-                scroll_filter=q_filter,
+                scroll_filter=scroll_filter,
                 limit=batch_limit,
                 offset=next_page_token,
                 with_vectors=True,
@@ -152,18 +152,24 @@ class QdrantIndexer:
 
         return all_hits
 
-    def delete_user_data(self, user_id: int) -> None:
+    def delete_user_data(self, user_id: int, file_name: Optional[str] = None) -> bool:
         """
         Удаляет данные, связанные с конкретным пользователем, из указанной коллекции.
         Для каждого найденного чанка:
         - если чанк принадлежит нескольким пользователям, удаляет user_id из списка user_ids
         - если чанк принадлежит только данному пользователю, удаляет весь чанк из коллекции
+        При этом можно удалить чанки как для одного определенного файла, так и для всех.
         """
         if not self.client.collection_exists(self.collection):
             logger.info(f"Коллекция '{self.collection}' не существует.")
             return
 
-        hits = self.get_all_chunks(user_id=user_id)
+        hits = self.get_all_chunks(user_id=user_id, file_name=file_name)
+
+        empty = True
+        if hits:
+            empty = False
+
         updated_points = []
 
         for hit in hits:
@@ -192,7 +198,9 @@ class QdrantIndexer:
 
         logger.info(f"Обработка удаления данных пользователя {user_id} завершена в коллекции '{self.collection}'.")
 
-    def inspect_collection(self, user_id: int = -1) -> None:
+        return empty
+
+    def inspect_collection(self, user_id: int) -> None:
         """
         Выводит информацию о содержимом коллекции - ID пользователей и связанные с ними тексты.
         """

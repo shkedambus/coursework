@@ -19,12 +19,25 @@ class RetrieveResponse(BaseModel):
 class UpsertRequest(BaseModel):
     user_id: int
     chunks: List[str]
+    file_names: List[str]
+
+class UpsertResponse(BaseModel):
+    success: bool
 
 class ClearRequest(BaseModel):
     user_id: int
 
-class SuccessResponse(BaseModel):
+class ClearResponse(BaseModel):
     success: bool
+    empty: bool
+
+class DeleteFileRequest(BaseModel):
+    user_id: int
+    file_name: str
+
+class DeleteFileResponse(BaseModel):
+    success: bool
+    empty: bool
 
 class CompareRequest(BaseModel):
     question: str
@@ -34,6 +47,12 @@ class CompareRequest(BaseModel):
 class CompareResponse(BaseModel):
     score_question: float
     score_context: float
+
+class ListFilesRequest(BaseModel):
+    user_id: int
+
+class ListFilesResponse(BaseModel):
+    file_names: List[str]
 
 app = FastAPI(title="RAG Retriever")
 
@@ -54,7 +73,7 @@ async def retrieve(req: RetrieveRequest):
         full_log(logger=logger, where="/retrieve")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/upsert", response_model=SuccessResponse)
+@app.post("/upsert", response_model=UpsertResponse)
 async def upsert(req: UpsertRequest):
     try:
         embeddings = embedding_model.encode(
@@ -64,19 +83,42 @@ async def upsert(req: UpsertRequest):
             normalize_embeddings=True,
             show_progress_bar=True
         )
-        indexer.upsert_chunks(chunks=req.chunks, embeddings=embeddings, user_id=req.user_id)
-        return SuccessResponse(success=True)
+        indexer.upsert_chunks(
+            file_names=req.file_names,
+            chunks=req.chunks,
+            embeddings=embeddings,
+            user_id=req.user_id
+        )
+        return UpsertResponse(success=True)
     except Exception as e:
         full_log(logger=logger, where="/upsert")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/clear", response_model=SuccessResponse)
+@app.post("/clear", response_model=ClearResponse)
 async def clear(req: ClearRequest):
     try:
-        indexer.delete_user_data(user_id=req.user_id)
-        return SuccessResponse(success=True)
+        empty = indexer.delete_user_data(user_id=req.user_id)
+        return ClearResponse(success=True, empty=empty)
     except Exception as e:
         full_log(logger=logger, where="/clear")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/delete_file", response_model=DeleteFileResponse)
+async def delete_file(req: DeleteFileRequest):
+    try:
+        empty = indexer.delete_user_data(user_id=req.user_id, file_name=req.file_name)
+        return DeleteFileResponse(success=True, empty=empty)
+    except Exception as e:
+        full_log(logger=logger, where="/drop")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/drop", response_model=ClearResponse)
+async def dtop(req: ClearRequest):
+    try:
+        indexer.clear_collection()
+        return ClearResponse(success=True, empty=False)
+    except Exception as e:
+        full_log(logger=logger, where="/drop")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/compare", response_model=CompareResponse)
@@ -97,4 +139,14 @@ async def compare(req: CompareRequest):
         return CompareResponse(score_question=score_question, score_context=score_context)
     except Exception as e:
         full_log(logger=logger, where="/compare")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/list_files", response_model=ListFilesResponse)
+async def list_files(req: ListFilesRequest):
+    try:
+        hits = indexer.get_all_chunks(user_id=req.user_id)
+        file_names = list(set([h.payload["file_name"] for h in hits]))
+        return ListFilesResponse(file_names=file_names)
+    except Exception as e:
+        full_log(logger=logger, where="/list_files")
         raise HTTPException(status_code=500, detail=str(e))
