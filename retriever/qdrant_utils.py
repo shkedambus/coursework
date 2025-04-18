@@ -2,7 +2,7 @@ import torch
 import hashlib, uuid
 from typing import List
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, Filter, VectorParams, PointStruct, PointIdsList
+from qdrant_client.models import Distance, Filter, VectorParams, PointStruct, PointIdsList, MatchValue, FieldCondition
 
 from shared.logger import get_logger
 logger = get_logger("retriever/qdrant_utils")
@@ -72,7 +72,7 @@ class QdrantIndexer:
             self.client.upsert(collection_name=self.collection, points=updated_points)
             logger.info(f"Обновлено {len(updated_points)} существующих чанков для пользователя {user_id}")
 
-    def similarity_search(self, query_vector: torch.Tensor, user_id: int, threshold: float = 0.3, top_k: int = 10) -> List[str]:
+    def similarity_search(self, query_vector: torch.Tensor, user_id: int, threshold: float = 0.5, top_k: int = 5) -> List[str]:
         """
         Выполняет поиск ближайших чанков в коллекции по косинусному сходству и возвращает тексты.
         Результаты фильтруются по тому, чтобы заданный user_id присутствовал в списке user_ids.
@@ -118,34 +118,35 @@ class QdrantIndexer:
 
         logger.info(f"Все данные в коллекции '{self.collection}' удалены.")
 
-    def get_all_chunks(self, user_id: int) -> List:
+    def get_all_chunks(self, user_id: int) -> list:
         """
-        Получает все чанки из коллекции, в которых user_id содержится в списке user_ids.
+        Возвращает все чанки, связанные с указанным user_id.
         """
         all_hits = []
+        batch_limit = 100
         next_page_token = None
 
-        batch_limit = 100
-
-        scroll_filter = None
+        q_filter = None
         if user_id != -1:
-            scroll_filter = {"must": [{"key": "user_ids", "match": {"value": user_id}}]}
+            q_filter = Filter(must=[
+                FieldCondition(
+                    key="user_ids",
+                    match=MatchValue(value=user_id)
+                )
+            ])
 
         while True:
-            # Если next_page_token не None, добавляем его в параметры запроса
-            scroll_params = {
-                "collection_name": self.collection,
-                "scroll_filter": scroll_filter,
-                "limit": batch_limit,
-                "with_vectors": True
-            }
-            if next_page_token:
-                scroll_params["next_page_token"] = next_page_token
-
-            hits, next_page_token = self.client.scroll(**scroll_params)
+            hits, next_page_token = self.client.scroll(
+                collection_name=self.collection,
+                scroll_filter=q_filter,
+                limit=batch_limit,
+                offset=next_page_token,
+                with_vectors=True,
+                with_payload=True
+            )
+                
             all_hits.extend(hits)
-
-            # Если возвращено меньше записей, чем лимит, или нет следующей страницы, значит данные закончились
+            
             if not next_page_token or len(hits) < batch_limit:
                 break
 
@@ -181,9 +182,8 @@ class QdrantIndexer:
                         collection_name=self.collection,
                         points_selector=PointIdsList(points=[hit.id])
                     )
-                    logger.info(f"Удалён чанк {hit.id}, принадлежащий пользователю {user_id}")
+                    # logger.info(f"Удалён чанк {hit.id}, принадлежащий пользователю {user_id}")
 
-        # Обновляем чанки в базе
         if updated_points:
             self.client.upsert(
                 collection_name=self.collection,
@@ -211,3 +211,14 @@ class QdrantIndexer:
             logger.info(f"ID: {point.id}, User IDs: {point.payload.get('user_ids', 'N/A')}")
             logger.info(f"Текст: {point.payload.get('text', 'Нет текста')}")
             logger.info("-" * 50)
+
+    def cosine_similarity_pytorch(self, tensor1: torch.Tensor, tensor2: torch.Tensor) -> torch.Tensor:
+        """
+        Вычисляет косинусное сходство между двумя тензорами, используя PyTorch.
+        """     
+        if len(tensor1.shape) == 1:
+            tensor1 = tensor1.unsqueeze(0)
+        if len(tensor2.shape) == 1:
+            tensor2 = tensor2.unsqueeze(0)
+
+        return torch.cosine_similarity(tensor1, tensor2)

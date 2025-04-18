@@ -4,10 +4,10 @@ from pathlib import Path
 
 import fitz
 import gdown
-import requests
+import httpx
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters.command import Command
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -18,7 +18,7 @@ from chunking import split_text_into_chunks
 class AddDocs(StatesGroup):
     waiting_for_link = State()
 
-from shared.logger import get_logger
+from shared.logger import get_logger, log_qa
 logger = get_logger("bot/app.py")
 
 load_dotenv()
@@ -31,6 +31,40 @@ GENERATOR_PORT = os.getenv("GENERATOR_PORT")
 bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
+
+class Emoji:
+    ERROR = "⚠️"
+    SUCCESS = "✅"
+    PROCESSING = "⚙️"
+    THINKING = "🤔"
+    DOCUMENT = "📄"
+    DATABASE = "🗄️"
+    WARNING = "❗"
+
+class Messages:
+    WELCOME = (
+        f"Привет, я твой персональный ассистент!\n\n"
+        "Я могу:\n"
+        f"- {Emoji.DOCUMENT} Добавлять PDF-документы из Google Drive или файлов\n"
+        f"- {Emoji.DATABASE} Искать информацию в добавленных документах\n"
+        f"- {Emoji.WARNING} Очищать базу знаний при необходимости\n\n"
+        "Просто отправьте мне документ или ссылку на папку Google Drive!"
+    )
+    
+    ADD_DOCS = (
+        f"{Emoji.DOCUMENT} Отправьте:\n"
+        "- Ссылку на папку Google Drive с PDF\n"
+        "- Или прикрепите PDF-файл напрямую\n\n"
+    )
+
+class Buttons:
+    CANCEL = [InlineKeyboardButton(text="Отменить", callback_data="cancel")]
+    ADD_DOCS = [InlineKeyboardButton(text="Добавить документы", callback_data="add_docs")]
+    CLEAR_DB = [InlineKeyboardButton(text="Очистить базу", callback_data="clear_db")]
+    
+# Генерация inline кнопок
+def get_main_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[Buttons.ADD_DOCS, Buttons.CLEAR_DB])
 
 def extract_pdf_structure(pdf_path: str, header_font_threshold: int = 14) -> str:
     """
@@ -96,53 +130,78 @@ def process_text(text: str) -> str:
     
     return "\n".join(structured_text)
 
-# Генерация кнопок
-def main_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="Добавить документы")],
-            [KeyboardButton(text="Очистить базу")],
-            [KeyboardButton(text="Помощь")]
-        ],
-        resize_keyboard=True,
-        row_width=2
-    )
+async def send_data(url: str, data: dict) -> dict:
+    """
+    Отправляет неблокирующие HTTP запросы.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=3600.0) as client:
+            response = await client.post(url=url, json=data)
+            response.raise_for_status()
+            return response.json()
+    except httpx.RequestError as e:
+        logger.error(f"Ошибка соединения: {e}")
+        return {"error": str(e)}
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP ошибка: {e.response.status_code} - {e.response.text}")
+        return {"error": str(e)}
 
 # Приветственное сообщение
 @dp.message(Command("start", "help"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer(
-        "Привет! Я твой бот-помощник.\n\n"
-        "- Пришли ссылку на папку Google Drive с PDF, чтобы добавить документы.\n"
-        "- Нажми «Очистить базу», чтобы удалить всё.\n"
-        "- Просто задай вопрос, и я отвечу на основе загруженных документов.",
-        reply_markup=main_keyboard()
+    await message.answer(   
+        Messages.WELCOME,
+        reply_markup=get_main_keyboard()
+    )
+
+# Кнопка отмены
+@dp.callback_query(F.data == "cancel")
+async def handle_cancel(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text(
+        f"{Emoji.WARNING} Действие отменено",
+        reply_markup=get_main_keyboard()
     )
 
 # Очистка базы
-@dp.message(F.text == "Очистить базу")
-async def clear_db(message: types.Message):
-    user_id = message.from_user.id
+@dp.callback_query(F.data == "clear_db")
+async def clear_db(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
     url = f"http://{RETRIEVER_HOST}:{RETRIEVER_PORT}/clear"
-    response = requests.post(url, json={"user_id": user_id})
-    if response.ok:
-        await message.answer("✅ База успешно очищена.")
+    data = {"user_id": user_id}
+    response = await send_data(url=url, data=data)
+    error = response.get("error", "")
+    if not error:
+        await callback.message.answer(f"{Emoji.SUCCESS} База успешно очищена", reply_markup=InlineKeyboardMarkup(inline_keyboard=[Buttons.ADD_DOCS]))
     else:
-        await message.answer("❌ Ошибка при очистке базы.")
+        await callback.message.answer(f"{Emoji.ERROR} Ошибка при очистке базы", reply_markup=get_main_keyboard())
 
 # Добавление документов в базу
-@dp.message(F.text == "Добавить документы")
-async def cmd_add_docs(message: types.Message, state: FSMContext):
-    await message.answer("Отправь ссылку на папку Google Drive с PDF‑файлами.")
+@dp.callback_query(F.data == "add_docs")
+async def handle_add_docs(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer(
+        Messages.ADD_DOCS,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[Buttons.CANCEL])
+    )
     await state.set_state(AddDocs.waiting_for_link)
 
-# Добавление документов в базу
+# Обработчик для добавления документов в базу
+@dp.message(AddDocs.waiting_for_link, F.text | F.document)
+async def process_input(message: types.Message, state: FSMContext):
+    if message.document:
+        await process_document(message, state)
+    else:
+        await process_link(message, state)
+
+# Добавление документов в базу через url на Google Drive
 @dp.message(AddDocs.waiting_for_link, F.text)
 async def process_link(message: types.Message, state: FSMContext):
     link = message.text.strip()
     user_id = message.from_user.id
-    status_message = await message.answer("⚙️ Обрабатываю документы...")
+    status_message = await message.answer(f"{Emoji.DOCUMENT} Обрабатываю документы...",
+                                          reply_markup=InlineKeyboardMarkup(inline_keyboard=[Buttons.CANCEL])
+    )
     tmp_dir = Path(f"tmp_{user_id}")
     tmp_dir.mkdir(exist_ok=True)
 
@@ -158,27 +217,82 @@ async def process_link(message: types.Message, state: FSMContext):
 
         if not chunks:
             await status_message.edit_text(
-                "⚠️ Не удалось извлечь текст из документов или документы пустые."
+                f"{Emoji.ERROR} Не удалось извлечь текст из документов или документы пустые",
+                reply_markup=get_main_keyboard()
             )
             return
 
         logger.info(f"Создано {len(chunks)} новых чанков. Начинаю эмбеддинг...")
+        await status_message.edit_text(f"{Emoji.PROCESSING} Отправляю данные в базу, это может занять несколько минут...",
+                                       reply_markup=InlineKeyboardMarkup(inline_keyboard=[Buttons.CANCEL])
+        )
+
         url = f"http://{RETRIEVER_HOST}:{RETRIEVER_PORT}/upsert"
-        response = requests.post(url, json={"user_id": user_id, "chunks": chunks})
-        response.raise_for_status()
+        data = {"user_id": user_id, "chunks": chunks}
+        response = await send_data(url=url, data=data)
 
         await status_message.edit_text(
-            "✅ Документы добавлены в базу знаний!"
+            f"{Emoji.SUCCESS} Документы добавлены в базу знаний!",
+            reply_markup=get_main_keyboard()
         )
+        await state.clear()
 
     except Exception as e:
         logger.error("Ошибка при добавлении документов", exc_info=True)
         await status_message.edit_text(
-            "❌ Не удалось добавить документы. Проверь ссылку и попробуй снова."
+            f"{Emoji.ERROR} Не удалось добавить документы. Проверьте ссылку и попробуйте снова."
         )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+# Добавление документов в базу напрямую из файла
+@dp.message(AddDocs.waiting_for_link, F.document)
+async def process_document(message: types.Message, state: FSMContext):
+    if message.document.mime_type != "application/pdf":
+        await message.answer(
+            f"{Emoji.ERROR} Поддерживаются только PDF-файлы. Попробуйте снова"
+        )
+        return
+    
+    status_message = await message.answer(f"{Emoji.DOCUMENT} Обрабатываю документ...",
+                                          reply_markup=InlineKeyboardMarkup(inline_keyboard=[Buttons.CANCEL]))
+    user_id = message.from_user.id
+    tmp_dir = Path(f"tmp_{user_id}")
+    tmp_dir.mkdir(exist_ok=True)
+    
+    try:
+        # Скачиваем файл
+        file = await bot.get_file(message.document.file_id)
+        file_path = tmp_dir / message.document.file_name
+        await bot.download_file(file.file_path, destination=file_path)
+        
+        text = extract_pdf_structure(str(file_path))
+        text = process_text(text)
+        chunks = split_text_into_chunks(text=text, chunk_size=128, overlap=12)
+        
+        if not chunks:
+            await status_message.edit_text(f"{Emoji.ERROR} Не удалось извлечь текст из документа",
+                                           reply_markup=get_main_keyboard()
+            )
+            return
+            
+        await status_message.edit_text(f"{Emoji.PROCESSING} Отправляю данные в базу, это может занять несколько минут...",
+                                       reply_markup=InlineKeyboardMarkup(inline_keyboard=[Buttons.CANCEL])
+        )
+        url = f"http://{RETRIEVER_HOST}:{RETRIEVER_PORT}/upsert"
+        data = {"user_id": user_id, "chunks": chunks}
+        response = await send_data(url=url, data=data)
+        
+        await status_message.edit_text(f"{Emoji.SUCCESS} Документ добавлен в базу знаний!",
+                                       reply_markup=get_main_keyboard()
+        )
         await state.clear()
+        
+    except Exception as e:
+        logger.error("Ошибка обработки документа", exc_info=True)
+        await status_message.edit_text(f"{Emoji.ERROR} Ошибка обработки документа")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 # Обработка вопроса
 @dp.message(F.text)
@@ -186,34 +300,57 @@ async def handle_question(message: types.Message):
     user_id = message.from_user.id
     query = message.text.strip()
     
-    if query in ["Добавить документы", "Очистить базу", "Помощь"]:
-        return
-    
-    status_message = await message.answer("⚙️ Думаю...")
+    status_message = await message.answer(f"{Emoji.DATABASE} Получаю данные из базы...",
+                                          reply_markup=InlineKeyboardMarkup(inline_keyboard=[Buttons.CANCEL]))
 
     try:
         url_1 = f"http://{RETRIEVER_HOST}:{RETRIEVER_PORT}/retrieve"
-        response_1 = requests.post(url_1, json={"user_id": user_id, "query": query})
-        response_1.raise_for_status()
-        chunks = response_1.json().get("chunks", [])
+        data_1 = {"user_id": user_id, "query": query}
+        response_1 = await send_data(url=url_1, data=data_1)
+        chunks = response_1.get("chunks", [])
 
         if not chunks:
             await status_message.edit_text(
-                "К сожалению, в предоставленном контексте нет информации по этому вопросу."
+                "К сожалению, в предоставленном контексте нет информации по этому вопросу.",
+                reply_markup=get_main_keyboard()
             )
             return
+        
+        context = " ".join(chunks)
+        
+        await status_message.edit_text(
+            f"{Emoji.THINKING} Данные получены, думаю над ответом...",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[Buttons.CANCEL])
+        )
 
         url_2 = f"http://{GENERATOR_HOST}:{GENERATOR_PORT}/summarize"
-        response_2 = requests.post(url_2, json={"user_id": user_id, "question": query, "context": " ".join(chunks)})
-        response_2.raise_for_status()
-        answer = response_2.json().get("summary", "")
+        data_2 = {"user_id": user_id, "question": query, "context": context}
+        response_2 = await send_data(url=url_2, data=data_2)
+        summary = response_2.get("summary", "")
 
-        await status_message.edit_text(answer or "❌ Пустой ответ.")
+        await status_message.edit_text(summary)
+
+        url_3 = f"http://{RETRIEVER_HOST}:{RETRIEVER_PORT}/compare"
+        data_3 = {"question": query, "context": context, "summary": summary}
+        response_3 = await send_data(url=url_3, data=data_3)
+
+        score_question = response_3.get("score_question", 0.0)
+        score_context = response_3.get("score_context", 0.0)
+
+        log_qa(
+            user_id=user_id,
+            question=query,
+            context=context,
+            answer=summary,
+            score_question=score_question,
+            score_context=score_context
+        )
 
     except Exception as e:
         logger.error("Ошибка при обработке вопроса", exc_info=True)
         await status_message.edit_text(
-            "❌ Произошла ошибка при получении ответа. Попробуй снова."
+            f"{Emoji.ERROR} Произошла ошибка при получении ответа. Попробуйте снова",
+            reply_markup=get_main_keyboard()
         )
 
 # Запуск бота

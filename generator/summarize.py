@@ -43,8 +43,9 @@ def summarize_text(article: str, model_name: str, tokenizer, model, prefix_ids: 
     with torch.inference_mode():
         all_output_ids = []
         for chunk_ids in tqdm(chunks, desc="Summarizing chunks"):
-            max_new_tokens = max(int(len(chunk_ids) * 0.30), 200)
-            min_length = max(int(len(chunk_ids) * 0.15), 50)
+            min_length = max(int(len(chunk_ids) * 0.1), 50)
+            max_new_tokens = max(int(len(chunk_ids) * 0.3), 200)
+            max_new_tokens = max(max_new_tokens, min_length + 1)
 
             if len(chunks) == 1 and final_prefix_length > 0:
                 chunk_ids = torch.cat((final_prefix_ids, chunk_ids), dim=0).unsqueeze(0).to(device)
@@ -56,7 +57,8 @@ def summarize_text(article: str, model_name: str, tokenizer, model, prefix_ids: 
             output_ids = model.generate(
                 eos_token_id=tokenizer.eos_token_id,
                 input_ids=chunk_ids,
-                max_new_tokens=max_new_tokens,
+                max_length=max_new_tokens,
+                early_stopping=True,
                 min_length=min_length,
                 no_repeat_ngram_size=params.get("no_repeat_ngram_size", 2),
                 num_beams=params.get("num_beams", 4),

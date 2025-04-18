@@ -26,6 +26,15 @@ class ClearRequest(BaseModel):
 class SuccessResponse(BaseModel):
     success: bool
 
+class CompareRequest(BaseModel):
+    question: str
+    context: str
+    summary: str
+
+class CompareResponse(BaseModel):
+    score_question: float
+    score_context: float
+
 app = FastAPI(title="RAG Retriever")
 
 load_dotenv()
@@ -38,7 +47,7 @@ embedding_model = SentenceTransformer("Alibaba-NLP/gte-Qwen2-1.5B-instruct", tru
 @app.post("/retrieve", response_model=RetrieveResponse)
 async def retrieve(req: RetrieveRequest):
     try:
-        query_vector = embedding_model.encode([req.query], normalize_embeddings=True)[0]
+        query_vector = embedding_model.encode([req.query], normalize_embeddings=True, prompt_name="query")[0]
         hits = indexer.similarity_search(query_vector=query_vector, user_id=req.user_id)
         return RetrieveResponse(chunks=hits)
     except Exception as e:
@@ -50,9 +59,10 @@ async def upsert(req: UpsertRequest):
     try:
         embeddings = embedding_model.encode(
             req.chunks,
-            batch_size=32,
-            convert_to_tensor=True,
-            normalize_embeddings=True
+            batch_size=8,
+            convert_to_tensor=False,
+            normalize_embeddings=True,
+            show_progress_bar=True
         )
         indexer.upsert_chunks(chunks=req.chunks, embeddings=embeddings, user_id=req.user_id)
         return SuccessResponse(success=True)
@@ -67,4 +77,24 @@ async def clear(req: ClearRequest):
         return SuccessResponse(success=True)
     except Exception as e:
         full_log(logger=logger, where="/clear")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/compare", response_model=CompareResponse)
+async def compare(req: CompareRequest):
+    try:
+        embeddings = embedding_model.encode(
+            [req.question, req.context, req.summary],
+            convert_to_tensor=True,
+            normalize_embeddings=True,
+            show_progress_bar=True
+        )
+        
+        question_embeddings, context_embeddings, summary_embeddings = embeddings
+
+        score_question = round(float(indexer.cosine_similarity_pytorch(tensor1=question_embeddings, tensor2=summary_embeddings)), 4)
+        score_context = round(float(indexer.cosine_similarity_pytorch(tensor1=context_embeddings, tensor2=summary_embeddings)), 4)
+
+        return CompareResponse(score_question=score_question, score_context=score_context)
+    except Exception as e:
+        full_log(logger=logger, where="/compare")
         raise HTTPException(status_code=500, detail=str(e))

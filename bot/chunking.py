@@ -126,7 +126,7 @@ def split_text_into_chunks(text: str, chunk_size: int = 512, overlap: int = 50) 
     """
     Разбивает текст на чанки, не превышающие chunk_size, с перекрытием overlap.
     """
-    sentences = sent_tokenize(text, language='russian')
+    sentences = sent_tokenize(text, language="russian")
     chunks = []
     current_chunk = []
     current_tokens = 0
